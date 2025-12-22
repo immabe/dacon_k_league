@@ -1,0 +1,198 @@
+# K-League Pass Coordinate Prediction Configuration
+
+# Paths
+paths:
+  data_dir: "data"
+  train_file: "train.csv"
+  test_file: "test.csv"
+  test_dir: "test"
+  match_info_file: "match_info.csv"
+  submission_file: "sample_submission.csv"
+  output_dir: "outputs"
+  model_dir: "checkpoints"
+
+# Field dimensions (FIFA standard)
+field:
+  length: 105  # x-axis
+  width: 68    # y-axis
+
+# Features configuration
+features:
+  # Categorical features to encode
+  categorical:
+    - type_name
+    - result_name
+    - is_home
+  
+  # Numerical features to normalize
+  numerical:
+    - start_x
+    - start_y
+    - end_x
+    - end_y
+    - time_seconds
+  
+  # Derived features to compute
+  derived:
+    - delta_x          # end_x - start_x
+    - delta_y          # end_y - start_y
+    - distance         # euclidean distance from start to end
+    - angle            # angle of movement
+    - speed            # distance / time_delta
+    - zone_start       # discretized zone for start position
+    - zone_end         # discretized zone for end position
+    - is_forward_pass  # whether pass goes forward
+    - is_progressive   # whether pass moves ball significantly forward
+  
+  # Whether to use each feature group
+  use_categorical: true
+  use_numerical: true
+  use_derived: true
+
+# Vocabulary configuration
+vocabulary:
+  # Event type names (order matters for embedding index)
+  type_names:
+    - Pass
+    - Carry
+    - Interception
+    - Clearance
+    - Duel
+    - Recovery
+    - Intervention
+    - Throw-In
+    - Tackle
+    - Pass_Freekick
+    - Pass_Corner
+    - Goal Kick
+    - Error
+    - Take-On
+    - Cross
+    - Block
+    - Shot
+    - Parry
+    - Aerial Clearance
+    - Catch
+    - Hit
+    - Foul
+    - Shot_Freekick
+    - Deflection
+    - Handball_Foul
+    - Penalty Kick
+    - <UNK>  # Unknown token (must be last)
+  
+  # Result names (order matters for embedding index)
+  result_names:
+    - Successful
+    - Unsuccessful
+    - On Target
+    - Yellow_Card
+    - Blocked
+    - Keeper Rush-Out
+    - Low Quality Shot
+    - Off Target
+    - <UNK>  # Unknown token
+    - <PAD>  # Padding token (must be last)
+
+# Model configuration
+model:
+  name: "baller2vec"  # Options: baller2vec
+  
+  # Baller2Vec specific config
+  baller2vec:
+    # Input dimensions (will be computed dynamically)
+    input_dim: null  # Set dynamically based on features
+    
+    # Transformer parameters
+    d_model: 128
+    nhead: 8
+    num_encoder_layers: 4
+    dim_feedforward: 512
+    dropout: 0.1
+    
+    # Output
+    output_dim: 2  # x, y coordinates
+    
+    # Sequence handling
+    max_seq_len: 300
+    
+    # Embedding dimensions
+    type_embed_dim: 32
+    result_embed_dim: 16
+    
+    # Positional encoding
+    use_positional_encoding: true
+
+# Training configuration
+training:
+  # Basic training params
+  batch_size: 64
+  # Increase workers to speed up feature extraction / batching
+  # (Tune per machine: 2~8 is usually reasonable)
+  num_workers: 4
+  max_epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  
+  # Scheduler
+  scheduler:
+    name: "cosine"  # Options: cosine, step, plateau
+    warmup_epochs: 5
+    min_lr: 0.00001
+  
+  # Early stopping
+  early_stopping:
+    monitor: "val_loss"
+    patience: 10
+    mode: "min"
+    min_delta: 0.0001
+  
+  # Model checkpoint
+  checkpoint:
+    monitor: "val_loss"
+    mode: "min"
+    save_top_k: 1
+    filename: "best-{epoch:02d}-{val_loss:.4f}"
+  
+  # Validation split
+  val_split: 0.1
+
+  # Validation splitting strategy
+  # true: group-based split by game_id (more realistic, avoids same-match leakage)
+  # false: random split by game_episode
+  use_game_id_split: true
+  
+  # Gradient clipping
+  gradient_clip_val: 1.0
+  
+  # Precision
+  precision: 32  # Options: 16, 32, "bf16"
+
+  # Loss configuration (align with leaderboard metric)
+  # - euclidean: mean Euclidean distance in original scale (105x68)  <-- recommended
+  # - euclidean_sq: mean squared Euclidean distance (more stable gradients)
+  # - mse: MSE on normalized coordinates (legacy)
+  loss:
+    name: "euclidean"
+
+# MLflow configuration
+mlflow:
+  experiment_name: "kleague-pass-prediction"
+  tracking_uri: "mlruns"
+  log_every_n_steps: 50
+  # Optional: set a human-readable run name (also used for checkpoint subfolder naming)
+  # If null, MLflow will auto-generate a run name.
+  run_name: null
+
+# Inference configuration
+inference:
+  batch_size: 128
+  num_workers: 4
+  
+# Random seed
+seed: 42
+
+# Device
+accelerator: "auto"  # Options: auto, cpu, gpu
+devices: 1
+

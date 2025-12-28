@@ -96,10 +96,10 @@ vocabulary:
 
 # Model configuration
 model:
-  name: "baller2vec"  # Options: baller2vec
+  name: "transformer"  # Options: transformer
   
-  # Baller2Vec specific config
-  baller2vec:
+  # Transformer specific config
+  transformer:
     # Input dimensions (will be computed dynamically)
     input_dim: null  # Set dynamically based on features
     

@@ -39,7 +39,7 @@ class KLeagueDataModule(pl.LightningDataModule):
         self.val_split = config.training.val_split
         
         # Max sequence length
-        self.max_seq_len = config.model.baller2vec.max_seq_len
+        self.max_seq_len = config.model.transformer.max_seq_len
         
         # Feature extractor
         self.feature_extractor = FeatureExtractor(config)

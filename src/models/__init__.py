@@ -1,5 +1,5 @@
-from .baller2vec import Baller2Vec
+from .transformer import TransformerEncoder
 from .lightning_module import KLeagueLightningModule
 
-__all__ = ["Baller2Vec", "KLeagueLightningModule"]
+__all__ = ["TransformerEncoder", "KLeagueLightningModule"]
 

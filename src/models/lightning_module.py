@@ -6,7 +6,7 @@ import pytorch_lightning as pl
 from typing import Dict, Any, Optional
 from omegaconf import DictConfig
 
-from .baller2vec import Baller2Vec
+from .transformer import TransformerEncoder
 from ..utils.metrics import normalized_euclidean_distance
 
 
@@ -39,8 +39,8 @@ class KLeagueLightningModule(pl.LightningModule):
         
         # Build model
         model_name = config.model.name
-        if model_name == "baller2vec":
-            self.model = Baller2Vec.from_config(
+        if model_name == "transformer":
+            self.model = TransformerEncoder.from_config(
                 config, feature_dim, num_type_classes, num_result_classes
             )
         else:

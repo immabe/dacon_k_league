@@ -1,7 +1,4 @@
-"""Baller2Vec model for K-League pass prediction.
-
-Inspired by: Alcorn & Nguyen (2021). Baller2Vec: A Multi-Entity Transformer 
-For Multi-Agent Spatiotemporal Representation Learning.
+"""Transformer encoder for K-League pass prediction.
 """
 
 import math
@@ -51,15 +48,8 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
-class Baller2Vec(nn.Module):
-    """Baller2Vec-style transformer for pass coordinate prediction.
-    
-    Architecture:
-    1. Input embedding: Combines numerical features, type embedding, and result embedding
-    2. Positional encoding: Adds sequence position information
-    3. Transformer encoder: Processes the sequence
-    4. Output head: Predicts (x, y) coordinates with sigmoid activation
-    """
+class TransformerEncoder(nn.Module):
+    """Transformer encoder for pass coordinate prediction."""
     
     def __init__(
         self,
@@ -76,7 +66,7 @@ class Baller2Vec(nn.Module):
         result_embed_dim: int = 16,
         use_positional_encoding: bool = True
     ):
-        """Initialize Baller2Vec model.
+        """Initialize Transformer encoder.
         
         Args:
             feature_dim: Dimension of numerical features.
@@ -214,7 +204,7 @@ class Baller2Vec(nn.Module):
         feature_dim: int,
         num_type_classes: int,
         num_result_classes: int
-    ) -> "Baller2Vec":
+    ) -> "TransformerEncoder":
         """Create model from config.
         
         Args:
@@ -226,7 +216,7 @@ class Baller2Vec(nn.Module):
         Returns:
             Initialized model.
         """
-        model_config = config.model.baller2vec
+        model_config = config.model.transformer
         
         return cls(
             feature_dim=feature_dim,

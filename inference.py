@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 from src.data import KLeagueDataModule
 from src.models import KLeagueLightningModule
+from src.utils.postprocess import stabilize_end_coordinates
 
 
 def load_best_model(
@@ -116,6 +117,13 @@ def run_inference(
     # Field dimensions for denormalization
     field_length = config.field.length
     field_width = config.field.width
+
+    # Postprocess config (optional)
+    pp_cfg = getattr(getattr(config, "inference", None), "postprocess", None)
+    pp_enabled = bool(getattr(pp_cfg, "enabled", False)) if pp_cfg is not None else False
+    pp_clip = bool(getattr(pp_cfg, "clip_to_pitch", True)) if pp_cfg is not None else True
+    pp_max_dist = getattr(pp_cfg, "max_pass_distance_m", 72.0) if pp_cfg is not None else 72.0
+    pp_fallback = str(getattr(pp_cfg, "fallback", "last_start")) if pp_cfg is not None else "last_start"
     
     # Run inference
     print("Running inference...")
@@ -138,6 +146,35 @@ def run_inference(
             # Denormalize coordinates
             pred_x = pred[:, 0].cpu().numpy() * field_length
             pred_y = pred[:, 1].cpu().numpy() * field_width
+
+            # Optional: rule-based stabilization using the last event's start position.
+            # features = [start_x_norm, start_y_norm, end_x_norm, end_y_norm, time_norm, ...]
+            if pp_enabled:
+                features = batch_device.get("features")
+                mask = batch_device.get("mask")
+                if not isinstance(features, torch.Tensor) or not isinstance(mask, torch.Tensor):
+                    raise ValueError("Postprocess requires 'features' and 'mask' tensors in batch.")
+
+                batch_size = features.shape[0]
+                # last valid index per sample
+                seq_lens = mask.sum(dim=1) - 1
+                seq_lens = seq_lens.clamp(min=0).long()
+                batch_idx_t = torch.arange(batch_size, device=features.device)
+
+                last_start_x = (features[batch_idx_t, seq_lens, 0].detach().cpu().numpy()) * field_length
+                last_start_y = (features[batch_idx_t, seq_lens, 1].detach().cpu().numpy()) * field_width
+
+                pred_x, pred_y = stabilize_end_coordinates(
+                    pred_x,
+                    pred_y,
+                    field_length=field_length,
+                    field_width=field_width,
+                    last_start_x=last_start_x,
+                    last_start_y=last_start_y,
+                    clip_to_pitch=pp_clip,
+                    max_pass_distance_m=None if pp_max_dist in (None, "null") else float(pp_max_dist),
+                    fallback=pp_fallback,
+                )
             
             # Store predictions
             batch_size = pred.shape[0]

@@ -68,13 +68,13 @@ class MLflowCheckpointDirCallback(pl.Callback):
         info_file = run_dir / "run_info.txt"
         info_file.write_text(f"run_name: {run_name}\nrun_id: {run_id}\n")
 
-        # Record resolved config in the run folder (if available on the module)
+        # Record config in the run folder (if available on the module)
         try:
             cfg = getattr(pl_module, "config", None)
             if cfg is not None:
-                (run_dir / "config_resolved.yaml").write_text(OmegaConf.to_yaml(cfg, resolve=True))
+                (run_dir / "config.yaml").write_text(OmegaConf.to_yaml(cfg, resolve=True))
         except Exception as e:
-            print(f"Warning: failed to write config_resolved.yaml: {e}")
+            print(f"Warning: failed to write config.yaml: {e}")
 
         print(f"[checkpoints] MLflow run_name={run_name} run_id={run_id}")
         print(f"[checkpoints] Saving checkpoints under: {run_dir}")
@@ -221,13 +221,13 @@ def main(config_path: str, overrides: list = None):
         p.write_text(checkpoint_callback.best_model_path)
         print(f"Best model path saved to: {p}")
 
-    # Record resolved config under the checkpoint run folder (run_name-only)
+    # Record config under the checkpoint run folder (run_name-only)
     try:
-        run_cfg_path = Path(checkpoint_callback.dirpath) / "config_resolved.yaml"
-        run_cfg_path.write_text(OmegaConf.to_yaml(config, resolve=True))
-        print(f"Resolved config saved to: {run_cfg_path}")
+        run_cfg_path = Path(checkpoint_callback.dirpath) / "config.yaml"
+        run_cfg_path.write_text(OmegaConf.to_yaml(config))
+        print(f"Config saved to: {run_cfg_path}")
     except Exception as e:
-        print(f"Warning: failed to write config_resolved.yaml: {e}")
+        print(f"Warning: failed to write config.yaml: {e}")
     
     return checkpoint_callback.best_model_path
 

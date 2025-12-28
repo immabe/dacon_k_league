@@ -188,6 +188,16 @@ mlflow:
 inference:
   batch_size: 128
   num_workers: 4
+  postprocess:
+    # Inference-time stabilization rules
+    enabled: true
+    # Clamp outputs into [0, 105] x [0, 68]
+    clip_to_pitch: true
+    # Cap predicted end position distance from the last event's start position (meters).
+    # Chosen based on train distribution (approx p99.9 ~ 71.6m).
+    max_pass_distance_m: 72.0
+    # When predictions are non-finite: "last_start" or "center"
+    fallback: "last_start"
   
 # Random seed
 seed: 42

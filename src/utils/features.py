@@ -260,8 +260,10 @@ class FeatureExtractor:
                     feat_vals = df[feat_name].values
                     
                     # Normalize based on feature type
-                    if feat_name in ['delta_x', 'delta_y']:
+                    if feat_name == 'delta_x':
                         feat_vals = feat_vals / self.field_length
+                    elif feat_name == 'delta_y':
+                        feat_vals = feat_vals / self.field_width
                     elif feat_name == 'distance':
                         # Max distance is diagonal of field
                         max_dist = np.sqrt(self.field_length**2 + self.field_width**2)

@@ -8,7 +8,7 @@ k-league/
 │   │   ├── dataset.py       # KLeagueDataset, KLeagueTestDataset
 │   │   └── datamodule.py    # PyTorch Lightning DataModule
 │   ├── models/
-│   │   ├── baller2vec.py    # Baller2Vec 트랜스포머 모델
+│   │   ├── transformer.py   # Transformer 인코더 모델
 │   │   └── lightning_module.py  # Lightning 학습 모듈
 │   └── utils/
 │       ├── features.py      # Feature 추출기 (config로 동적 선택)
@@ -23,15 +23,27 @@ k-league/
 └── .gitignore
 ```
 ## 주요 기능
-Baller2Vec 모델: 멀티-엔티티 트랜스포머로 시공간 표현 학습
+Transformer 모델: 시퀀스 트랜스포머 인코더로 패스 도착 좌표 예측
 동적 Feature 선택: configs/config.yaml에서 사용할 feature 그룹 선택 가능
 좌표 정규화: 학습 시 [0,1] 정규화, 추론 시 원래 스케일(105x68)로 복원
 MLflow 실험 추적: 하이퍼파라미터, 메트릭, 모델 자동 로깅
 Early Stopping: validation loss 기준 조기 종료
 Best 모델 자동 로드: checkpoints/best_model_path.txt에서 자동 읽기
+
 ## 사용 방법
 1. 환경 설정
-`bash scripts/setup.sh# 2. 학습source .venv/bin/activatepython train.py --config configs/config.yaml# 3. 추론 (best 모델 자동 로드)python inference.py --config configs/config.yaml`
+```bash
+bash scripts/setup.sh
+source .venv/bin/activate
+```
+2. 학습
+```bash
+python train.py --config configs/config.yaml
+```
+3. 추론 (best 모델 자동 로드)
+```bash
+python inference.py --config configs/config.yaml
+```
 2. 설정 오버라이드 예시
 배치 크기, 에폭 수 변경
 `python train.py --override training.batch_size=128 training.max_epochs=50`

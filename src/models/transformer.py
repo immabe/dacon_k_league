@@ -127,7 +127,7 @@ class TransformerEncoder(nn.Module):
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(d_model // 2, 2),  # Output (x, y)
-            nn.Sigmoid()  # Ensure output in [0, 1]
+            nn.Tanh()  # Ensure output in [-1, 1] (for dx/dy normalized deltas)
         )
         
         # Initialize weights

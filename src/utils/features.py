@@ -201,8 +201,8 @@ class FeatureExtractor:
                 - features: (seq_len, feature_dim) array
                 - type_ids: (seq_len,) array of type indices
                 - result_ids: (seq_len,) array of result indices
-                - target_x: target x coordinate (if include_target)
-                - target_y: target y coordinate (if include_target)
+                - target_dx: target dx (normalized to [-1, 1]) (if include_target)
+                - target_dy: target dy (normalized to [-1, 1]) (if include_target)
                 - seq_len: sequence length
         """
         # Sort by action_id to ensure correct order
@@ -210,13 +210,22 @@ class FeatureExtractor:
 
         # If training, take target from the last row but do NOT let the model see
         # the last event's end_x/end_y (to match inference where it can be missing).
-        target_x = None
-        target_y = None
+        #
+        # Target is delta (dx, dy) from last event start -> end, normalized to [-1, 1]:
+        #   dx_norm = clip(dx / field_length, -1, 1)
+        #   dy_norm = clip(dy / field_width,  -1, 1)
+        target_dx = None
+        target_dy = None
         if include_target:
             last_row = df.iloc[-1]
-            # target is the actual pass end position (normalized)
-            target_x = float(last_row['end_x']) / self.field_length
-            target_y = float(last_row['end_y']) / self.field_width
+            dx = float(last_row['end_x']) - float(last_row['start_x'])
+            dy = float(last_row['end_y']) - float(last_row['start_y'])
+
+            dx_norm = np.clip(dx / self.field_length, -1.0, 1.0)
+            dy_norm = np.clip(dy / self.field_width, -1.0, 1.0)
+
+            target_dx = dx_norm
+            target_dy = dy_norm
 
             # Mask the last event's end coordinates to prevent leakage
             df = df.copy()
@@ -296,8 +305,8 @@ class FeatureExtractor:
         
         # Get target from last row
         if include_target:
-            result['target_x'] = np.float32(target_x)
-            result['target_y'] = np.float32(target_y)
+            result['target_dx'] = np.float32(target_dx)
+            result['target_dy'] = np.float32(target_dy)
         
         return result
     
@@ -334,10 +343,10 @@ class FeatureExtractor:
         result_ids = np.zeros((batch_size, max_len), dtype=np.int64)
         mask = np.zeros((batch_size, max_len), dtype=np.bool_)
         
-        has_target = 'target_x' in batch[0]
+        has_target = 'target_dx' in batch[0]
         if has_target:
-            target_x = np.zeros(batch_size, dtype=np.float32)
-            target_y = np.zeros(batch_size, dtype=np.float32)
+            target_dx = np.zeros(batch_size, dtype=np.float32)
+            target_dy = np.zeros(batch_size, dtype=np.float32)
         
         for i, item in enumerate(batch):
             seq_len = min(item['seq_len'], max_len)
@@ -356,8 +365,8 @@ class FeatureExtractor:
             mask[i, :seq_len] = True
             
             if has_target:
-                target_x[i] = item['target_x']
-                target_y[i] = item['target_y']
+                target_dx[i] = item['target_dx']
+                target_dy[i] = item['target_dy']
         
         result = {
             'features': torch.from_numpy(features),
@@ -370,8 +379,8 @@ class FeatureExtractor:
         }
         
         if has_target:
-            result['target_x'] = torch.from_numpy(target_x)
-            result['target_y'] = torch.from_numpy(target_y)
+            result['target_dx'] = torch.from_numpy(target_dx)
+            result['target_dy'] = torch.from_numpy(target_dy)
         
         return result
 

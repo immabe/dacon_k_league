@@ -141,29 +141,35 @@ def run_inference(
             }
             
             # Forward pass
-            pred = model(batch_device)  # (batch, 2) in [0, 1]
-            
-            # Denormalize coordinates
-            pred_x = pred[:, 0].cpu().numpy() * field_length
-            pred_y = pred[:, 1].cpu().numpy() * field_width
+            # Model outputs normalized deltas (dx_norm, dy_norm) in [-1, 1] range.
+            pred = model(batch_device)  # (batch, 2) in [-1, 1]
+
+            # We must reconstruct end = last_start + delta.
+            features = batch_device.get("features")
+            mask = batch_device.get("mask")
+            if not isinstance(features, torch.Tensor) or not isinstance(mask, torch.Tensor):
+                raise ValueError("Inference requires 'features' and 'mask' tensors in batch.")
+
+            batch_size = features.shape[0]
+            # last valid index per sample
+            seq_lens = mask.sum(dim=1) - 1
+            seq_lens = seq_lens.clamp(min=0).long()
+            batch_idx_t = torch.arange(batch_size, device=features.device)
+
+            last_start_x = (features[batch_idx_t, seq_lens, 0].detach().cpu().numpy()) * field_length
+            last_start_y = (features[batch_idx_t, seq_lens, 1].detach().cpu().numpy()) * field_width
+
+            # Decode delta from [-1,1] to meters
+            dx_norm = pred[:, 0].detach().cpu().numpy()
+            dy_norm = pred[:, 1].detach().cpu().numpy()
+            dx = dx_norm * field_length
+            dy = dy_norm * field_width
+
+            pred_x = last_start_x + dx
+            pred_y = last_start_y + dy
 
             # Optional: rule-based stabilization using the last event's start position.
-            # features = [start_x_norm, start_y_norm, end_x_norm, end_y_norm, time_norm, ...]
             if pp_enabled:
-                features = batch_device.get("features")
-                mask = batch_device.get("mask")
-                if not isinstance(features, torch.Tensor) or not isinstance(mask, torch.Tensor):
-                    raise ValueError("Postprocess requires 'features' and 'mask' tensors in batch.")
-
-                batch_size = features.shape[0]
-                # last valid index per sample
-                seq_lens = mask.sum(dim=1) - 1
-                seq_lens = seq_lens.clamp(min=0).long()
-                batch_idx_t = torch.arange(batch_size, device=features.device)
-
-                last_start_x = (features[batch_idx_t, seq_lens, 0].detach().cpu().numpy()) * field_length
-                last_start_y = (features[batch_idx_t, seq_lens, 1].detach().cpu().numpy()) * field_width
-
                 pred_x, pred_y = stabilize_end_coordinates(
                     pred_x,
                     pred_y,
@@ -213,7 +219,17 @@ def run_inference(
     if output_path is None:
         output_dir = Path(config.paths.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / "submission.csv"
+        ckpt_label = None
+        if checkpoint_path is not None:
+            cp = Path(checkpoint_path)
+            # If user passed a directory (e.g., checkpoints/pred_dxdy), use the folder name only.
+            ckpt_label = cp.name if cp.is_dir() else cp.stem
+
+        output_path = (
+            (output_dir / f"{ckpt_label}_submission.csv")
+            if ckpt_label
+            else (output_dir / "submission.csv")
+        )
     
     submission.to_csv(output_path, index=False)
     print(f"Submission saved to: {output_path}")

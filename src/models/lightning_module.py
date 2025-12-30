@@ -3,11 +3,10 @@
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from omegaconf import DictConfig
 
 from .transformer import TransformerEncoder
-from ..utils.metrics import normalized_euclidean_distance
 
 
 class KLeagueLightningModule(pl.LightningModule):
@@ -74,32 +73,37 @@ class KLeagueLightningModule(pl.LightningModule):
     def _compute_loss(
         self,
         pred: torch.Tensor,
-        target_x: torch.Tensor,
-        target_y: torch.Tensor
+        target_dx: torch.Tensor,
+        target_dy: torch.Tensor,
+        batch: Optional[Dict[str, torch.Tensor]] = None
     ) -> torch.Tensor:
         """Compute training loss.
         
         Args:
-            pred: Predicted coordinates (batch, 2) in [0, 1].
-            target_x: Target x coordinates in [0, 1].
-            target_y: Target y coordinates in [0, 1].
+            pred: Predicted deltas normalized to [-1, 1] (batch, 2).
+            target_dx: Target dx normalized to [-1, 1].
+            target_dy: Target dy normalized to [-1, 1].
+            batch: Optional batch dict; required for euclidean loss (needs last_start).
             
         Returns:
             Loss value.
         """
-        target = torch.stack([target_x, target_y], dim=1)
+        target = torch.stack([target_dx, target_dy], dim=1)
 
         loss_name = 'mse'
         if hasattr(self.config, 'training') and hasattr(self.config.training, 'loss'):
             loss_name = str(getattr(self.config.training.loss, 'name', 'mse'))
 
-        # Leaderboard metric is Euclidean distance in original scale.
+        # Leaderboard metric is Euclidean distance between end coordinates in original scale.
+        # With delta targets, we reconstruct end = last_start + delta (both for pred and true).
         if loss_name == 'euclidean' or loss_name == 'euclidean_sq':
-            pred_x = pred[:, 0] * self.field_length
-            pred_y = pred[:, 1] * self.field_width
-            true_x = target[:, 0] * self.field_length
-            true_y = target[:, 1] * self.field_width
-            dist_sq = (pred_x - true_x) ** 2 + (pred_y - true_y) ** 2
+            if batch is None:
+                raise ValueError("euclidean loss requires the full batch to reconstruct last_start.")
+
+            pred_end_x, pred_end_y = self._decode_to_end_coordinates(pred, batch)
+            true_end_x, true_end_y = self._decode_to_end_coordinates(target, batch)
+
+            dist_sq = (pred_end_x - true_end_x) ** 2 + (pred_end_y - true_end_y) ** 2
             if loss_name == 'euclidean_sq':
                 return dist_sq.mean()
             return torch.sqrt(dist_sq + 1e-12).mean()
@@ -107,29 +111,79 @@ class KLeagueLightningModule(pl.LightningModule):
         # Legacy: MSE on normalized coordinates
         return self.loss_fn(pred, target)
     
+    def _get_last_start_xy_m(self, batch: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Get last valid start_x/start_y in meters for each sample from batch features/mask."""
+        features = batch["features"]
+        mask = batch.get("mask")
+
+        if mask is None:
+            last_start_x_norm = features[:, -1, 0]
+            last_start_y_norm = features[:, -1, 1]
+        else:
+            seq_lens = mask.sum(dim=1) - 1
+            seq_lens = seq_lens.clamp(min=0).long()
+            batch_idx = torch.arange(features.size(0), device=features.device)
+            last_start_x_norm = features[batch_idx, seq_lens, 0]
+            last_start_y_norm = features[batch_idx, seq_lens, 1]
+
+        last_start_x = last_start_x_norm * self.field_length
+        last_start_y = last_start_y_norm * self.field_width
+        return last_start_x, last_start_y
+
+    def _decode_delta(self, encoded_delta: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Decode normalized delta in [-1,1] to dx/dy in meters."""
+        dx_norm = encoded_delta[:, 0]
+        dy_norm = encoded_delta[:, 1]
+        dx = dx_norm * self.field_length
+        dy = dy_norm * self.field_width
+        return dx, dy
+
+    def _decode_to_end_coordinates(
+        self, encoded_delta: torch.Tensor, batch: Dict[str, torch.Tensor]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Decode normalized deltas to end_x/end_y in meters using last_start from batch."""
+        last_start_x, last_start_y = self._get_last_start_xy_m(batch)
+        dx, dy = self._decode_delta(encoded_delta)
+        end_x = last_start_x + dx
+        end_y = last_start_y + dy
+        return end_x, end_y
+
+    def _decode_to_end_coordinates_with_last_start(
+        self,
+        encoded_delta: torch.Tensor,
+        last_start_x_m: torch.Tensor,
+        last_start_y_m: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Decode encoded deltas to end_x/end_y in meters given last_start (meters)."""
+        dx, dy = self._decode_delta(encoded_delta)
+        end_x = last_start_x_m + dx
+        end_y = last_start_y_m + dy
+        return end_x, end_y
+
     def _compute_euclidean_distance(
         self,
         pred: torch.Tensor,
-        target_x: torch.Tensor,
-        target_y: torch.Tensor
+        target_dx: torch.Tensor,
+        target_dy: torch.Tensor,
+        batch: Dict[str, torch.Tensor]
     ) -> torch.Tensor:
         """Compute Euclidean distance in original scale.
         
         Args:
-            pred: Predicted coordinates (batch, 2) in [0, 1].
-            target_x: Target x coordinates in [0, 1].
-            target_y: Target y coordinates in [0, 1].
+            pred: Predicted deltas normalized to [-1, 1] (batch, 2).
+            target_dx: Target dx normalized to [-1, 1].
+            target_dy: Target dy normalized to [-1, 1].
+            batch: Batch dict (needed to get last_start).
             
         Returns:
             Mean Euclidean distance.
         """
-        return normalized_euclidean_distance(
-            pred[:, 0], pred[:, 1],
-            target_x, target_y,
-            field_length=self.field_length,
-            field_width=self.field_width,
-            reduction='mean'
-        )
+        target = torch.stack([target_dx, target_dy], dim=1)
+        pred_end_x, pred_end_y = self._decode_to_end_coordinates(pred, batch)
+        true_end_x, true_end_y = self._decode_to_end_coordinates(target, batch)
+        # euclidean_distance expects original-scale coordinates already
+        dist_sq = (pred_end_x - true_end_x) ** 2 + (pred_end_y - true_end_y) ** 2
+        return torch.sqrt(dist_sq + 1e-12).mean()
     
     def training_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         """Training step.
@@ -142,17 +196,18 @@ class KLeagueLightningModule(pl.LightningModule):
             Loss value.
         """
         pred = self(batch)
-        loss = self._compute_loss(pred, batch['target_x'], batch['target_y'])
+        loss = self._compute_loss(pred, batch['target_dx'], batch['target_dy'], batch=batch)
+        batch_size = int(batch["features"].size(0))
         
         # Compute metrics
         with torch.no_grad():
             euclidean_dist = self._compute_euclidean_distance(
-                pred, batch['target_x'], batch['target_y']
+                pred, batch['target_dx'], batch['target_dy'], batch=batch
             )
         
         # Log metrics
-        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
-        self.log('train_euclidean', euclidean_dist, on_step=False, on_epoch=True)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
+        self.log('train_euclidean', euclidean_dist, on_step=False, on_epoch=True, batch_size=batch_size)
         
         return loss
     
@@ -167,20 +222,24 @@ class KLeagueLightningModule(pl.LightningModule):
             Dictionary with predictions and targets.
         """
         pred = self(batch)
-        loss = self._compute_loss(pred, batch['target_x'], batch['target_y'])
+        loss = self._compute_loss(pred, batch['target_dx'], batch['target_dy'], batch=batch)
+        batch_size = int(batch["features"].size(0))
         euclidean_dist = self._compute_euclidean_distance(
-            pred, batch['target_x'], batch['target_y']
+            pred, batch['target_dx'], batch['target_dy'], batch=batch
         )
         
         # Log metrics
-        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val_euclidean', euclidean_dist, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
+        self.log('val_euclidean', euclidean_dist, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
         
         # Store for epoch-end aggregation
+        last_start_x_m, last_start_y_m = self._get_last_start_xy_m(batch)
         output = {
             'pred': pred.detach(),
-            'target_x': batch['target_x'].detach(),
-            'target_y': batch['target_y'].detach(),
+            'target_dx': batch['target_dx'].detach(),
+            'target_dy': batch['target_dy'].detach(),
+            'last_start_x_m': last_start_x_m.detach(),
+            'last_start_y_m': last_start_y_m.detach(),
             'loss': loss.detach()
         }
         self.validation_step_outputs.append(output)
@@ -192,14 +251,23 @@ class KLeagueLightningModule(pl.LightningModule):
         if not self.validation_step_outputs:
             return
         
-        # Concatenate all predictions and targets
+        # Concatenate all predictions / targets / last_start
         all_pred = torch.cat([x['pred'] for x in self.validation_step_outputs])
-        all_target_x = torch.cat([x['target_x'] for x in self.validation_step_outputs])
-        all_target_y = torch.cat([x['target_y'] for x in self.validation_step_outputs])
-        
-        # Compute overall Euclidean distance
-        overall_dist = self._compute_euclidean_distance(all_pred, all_target_x, all_target_y)
-        self.log('val_euclidean_overall', overall_dist)
+        all_target_dx = torch.cat([x['target_dx'] for x in self.validation_step_outputs])
+        all_target_dy = torch.cat([x['target_dy'] for x in self.validation_step_outputs])
+        all_last_start_x_m = torch.cat([x['last_start_x_m'] for x in self.validation_step_outputs])
+        all_last_start_y_m = torch.cat([x['last_start_y_m'] for x in self.validation_step_outputs])
+
+        all_target = torch.stack([all_target_dx, all_target_dy], dim=1)
+        pred_end_x, pred_end_y = self._decode_to_end_coordinates_with_last_start(
+            all_pred, all_last_start_x_m, all_last_start_y_m
+        )
+        true_end_x, true_end_y = self._decode_to_end_coordinates_with_last_start(
+            all_target, all_last_start_x_m, all_last_start_y_m
+        )
+        dist_sq = (pred_end_x - true_end_x) ** 2 + (pred_end_y - true_end_y) ** 2
+        overall_dist = torch.sqrt(dist_sq + 1e-12).mean()
+        self.log('val_euclidean_overall', overall_dist, batch_size=int(all_pred.size(0)))
         
         # Clear outputs
         self.validation_step_outputs.clear()
@@ -215,10 +283,8 @@ class KLeagueLightningModule(pl.LightningModule):
             Dictionary with predictions and game episodes.
         """
         pred = self(batch)
-        
-        # Denormalize coordinates
-        pred_x = pred[:, 0] * self.field_length
-        pred_y = pred[:, 1] * self.field_width
+        # Decode deltas to end coordinates in meters
+        pred_x, pred_y = self._decode_to_end_coordinates(pred, batch)
         
         return {
             'pred_x': pred_x.cpu().numpy(),

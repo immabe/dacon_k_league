@@ -131,7 +131,7 @@ training:
   # (Tune per machine: 2~8 is usually reasonable)
   num_workers: 4
   max_epochs: 100
-  learning_rate: 0.0005
+  learning_rate: 0.001
   weight_decay: 0.0001
   
   # Scheduler

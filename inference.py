@@ -3,7 +3,7 @@
 import os
 import argparse
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -21,7 +21,7 @@ def load_best_model(
     config: OmegaConf,
     model_dir: str,
     checkpoint_path: Optional[str] = None
-) -> KLeagueLightningModule:
+) -> Tuple[KLeagueLightningModule, KLeagueDataModule, str]:
     """Load the best trained model.
     
     Args:
@@ -30,7 +30,7 @@ def load_best_model(
         checkpoint_path: Explicit checkpoint path (optional).
         
     Returns:
-        Loaded model.
+        (model, data_module, checkpoint_path)
     """
     # If the provided checkpoint_path is a directory, treat it as model_dir and auto-detect ckpt inside.
     if checkpoint_path is not None and Path(checkpoint_path).is_dir():
@@ -77,7 +77,23 @@ def load_best_model(
     )
     model.eval()
     
-    return model, data_module
+    return model, data_module, checkpoint_path
+
+
+def _infer_checkpoint_label(checkpoint_path: Optional[str]) -> Optional[str]:
+    """Infer a human-friendly label from a checkpoint path.
+
+    Rule (requested): use the *last folder name* of the given path.
+    - If checkpoint_path is a directory: use its folder name.
+    - If checkpoint_path is a file (e.g., .ckpt): use its parent folder name.
+    """
+    if not checkpoint_path:
+        return None
+
+    p = Path(checkpoint_path)
+    # For file paths, use the parent folder. For directory paths, use the directory name.
+    # (Don't depend on file existence: allow paths that don't exist yet.)
+    return p.name if p.suffix == "" else p.parent.name
 
 
 def run_inference(
@@ -108,7 +124,7 @@ def run_inference(
         model_dir = checkpoint_path
         checkpoint_path = None
 
-    model, data_module = load_best_model(config, model_dir, checkpoint_path)
+    model, data_module, checkpoint_path = load_best_model(config, model_dir, checkpoint_path)
     
     # Setup test data
     data_module.setup('test')
@@ -219,17 +235,8 @@ def run_inference(
     if output_path is None:
         output_dir = Path(config.paths.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        ckpt_label = None
-        if checkpoint_path is not None:
-            cp = Path(checkpoint_path)
-            # If user passed a directory (e.g., checkpoints/pred_dxdy), use the folder name only.
-            ckpt_label = cp.name if cp.is_dir() else cp.stem
-
-        output_path = (
-            (output_dir / f"{ckpt_label}_submission.csv")
-            if ckpt_label
-            else (output_dir / "submission.csv")
-        )
+        ckpt_label = _infer_checkpoint_label(checkpoint_path)
+        output_path = output_dir / f"{ckpt_label}_submission.csv" if ckpt_label else (output_dir / "submission.csv")
     
     submission.to_csv(output_path, index=False)
     print(f"Submission saved to: {output_path}")

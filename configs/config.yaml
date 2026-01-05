@@ -157,6 +157,12 @@ training:
   # Validation split
   val_split: 0.1
 
+  # Data augmentation
+  augmentation:
+    y_mirror:
+      enabled: true
+      prob: 0.5
+
   # Validation splitting strategy
   # true: group-based split by game_id (more realistic, avoids same-match leakage)
   # false: random split by game_episode

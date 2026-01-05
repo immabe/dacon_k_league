@@ -18,7 +18,9 @@ class KLeagueDataset(Dataset):
         data: pd.DataFrame,
         feature_extractor: FeatureExtractor,
         game_episodes: Optional[List[str]] = None,
-        include_target: bool = True
+        include_target: bool = True,
+        augment_y_mirror: bool = False,
+        y_mirror_prob: float = 0.5
     ):
         """Initialize dataset.
         
@@ -33,6 +35,8 @@ class KLeagueDataset(Dataset):
         self.data = data
         self.feature_extractor = feature_extractor
         self.include_target = include_target
+        self.augment_y_mirror = bool(augment_y_mirror)
+        self.y_mirror_prob = float(y_mirror_prob)
 
         # Sort once for stable slicing
         self.data_sorted = (
@@ -82,6 +86,16 @@ class KLeagueDataset(Dataset):
         episode = self.game_episodes[idx]
         start, end = self.episode_to_slice[episode]
         df = self.data_sorted.iloc[start:end]
+
+        # Train-only augmentation: mirror y coordinates at the DataFrame level.
+        # This ensures derived features and targets (dy) stay consistent.
+        if self.augment_y_mirror and (np.random.random() < self.y_mirror_prob):
+            df = df.copy()
+            field_width = float(self.feature_extractor.field_width)
+            if 'start_y' in df.columns:
+                df['start_y'] = field_width - df['start_y'].astype(float)
+            if 'end_y' in df.columns:
+                df['end_y'] = field_width - df['end_y'].astype(float)
         
         result = self.feature_extractor.extract_sequence_features(
             df, include_target=self.include_target

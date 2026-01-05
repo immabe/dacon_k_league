@@ -9,7 +9,7 @@ from functools import partial
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split, GroupShuffleSplit
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from .dataset import KLeagueDataset, KLeagueTestDataset
 from ..utils.features import FeatureExtractor
@@ -95,18 +95,24 @@ class KLeagueDataModule(pl.LightningDataModule):
                 )
             
             # Create datasets
+            ymir_enabled = bool(OmegaConf.select(self.config, "training.augmentation.y_mirror.enabled", default=False))
+            ymir_prob = float(OmegaConf.select(self.config, "training.augmentation.y_mirror.prob", default=0.5))
+
             self.train_dataset = KLeagueDataset(
                 data=self.train_data,
                 feature_extractor=self.feature_extractor,
                 game_episodes=train_episodes,
-                include_target=True
+                include_target=True,
+                augment_y_mirror=ymir_enabled,
+                y_mirror_prob=ymir_prob
             )
             
             self.val_dataset = KLeagueDataset(
                 data=self.train_data,
                 feature_extractor=self.feature_extractor,
                 game_episodes=val_episodes,
-                include_target=True
+                include_target=True,
+                augment_y_mirror=False
             )
             
             print(f"Train episodes: {len(train_episodes)}")

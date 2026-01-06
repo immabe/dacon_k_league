@@ -3,7 +3,7 @@
 import os
 import argparse
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 import numpy as np
 import pandas as pd
@@ -15,6 +15,84 @@ from tqdm import tqdm
 from src.data import KLeagueDataModule
 from src.models import KLeagueLightningModule
 from src.utils.postprocess import stabilize_end_coordinates
+
+
+def apply_y_mirror_to_features(
+    features: torch.Tensor,
+    config: OmegaConf
+) -> torch.Tensor:
+    """Apply Y-mirror transformation to features tensor.
+    
+    Args:
+        features: (batch, seq_len, feature_dim) tensor
+        config: Configuration object
+        
+    Returns:
+        Y-mirrored features tensor
+    """
+    features = features.clone()
+    
+    idx = 0
+    
+    # Numerical features: start_x(0), start_y(1), end_x(2), end_y(3), time_seconds(4)
+    if config.features.use_numerical:
+        features[:, :, 1] = 1.0 - features[:, :, 1]  # start_y: mirror
+        features[:, :, 3] = 1.0 - features[:, :, 3]  # end_y: mirror
+        idx += 5
+    
+    # Derived features
+    if config.features.use_derived:
+        derived_list = list(config.features.derived)
+        for i, feat_name in enumerate(derived_list):
+            feat_idx = idx + i
+            if feat_name == 'delta_y':
+                features[:, :, feat_idx] = -features[:, :, feat_idx]
+            elif feat_name == 'angle':
+                # angle = (atan2(dy, dx) + pi) / (2*pi), mirror: 1 - angle
+                features[:, :, feat_idx] = 1.0 - features[:, :, feat_idx]
+            # zone_start, zone_end: leave as is (slight inaccuracy acceptable)
+            # touchline_distance, center_distance: symmetric, no change needed
+    
+    return features
+
+
+def predict_with_tta(
+    model: torch.nn.Module,
+    batch: Dict[str, torch.Tensor],
+    config: OmegaConf,
+    device: torch.device
+) -> torch.Tensor:
+    """Predict with Test Time Augmentation (Y-mirror).
+    
+    Args:
+        model: The model
+        batch: Batch dictionary with features, type_ids, result_ids, mask
+        config: Configuration object
+        device: Device to run on
+        
+    Returns:
+        Averaged predictions (batch, 2)
+    """
+    # Original prediction
+    pred_original = model(batch)  # (batch, 2): (dx_norm, dy_norm)
+    
+    # Y-mirrored prediction
+    batch_mirrored = {
+        k: v.clone() if isinstance(v, torch.Tensor) else v
+        for k, v in batch.items()
+    }
+    batch_mirrored['features'] = apply_y_mirror_to_features(batch['features'], config)
+    
+    pred_mirrored = model(batch_mirrored)  # (batch, 2)
+    
+    # Mirror back the dy prediction: dy_original = -dy_mirrored
+    pred_mirrored_corrected = pred_mirrored.clone()
+    pred_mirrored_corrected[:, 1] = -pred_mirrored[:, 1]
+    
+    # Average
+    pred_avg = (pred_original + pred_mirrored_corrected) / 2.0
+    
+    return pred_avg
 
 
 def _infer_checkpoint_config_path(
@@ -176,8 +254,16 @@ def run_inference(
     pp_max_dist = getattr(pp_cfg, "max_pass_distance_m", 72.0) if pp_cfg is not None else 72.0
     pp_fallback = str(getattr(pp_cfg, "fallback", "last_start")) if pp_cfg is not None else "last_start"
     
+    # TTA config
+    tta_cfg = getattr(getattr(config, "inference", None), "tta", None)
+    tta_enabled = bool(getattr(tta_cfg, "enabled", False)) if tta_cfg is not None else False
+    tta_y_mirror = bool(getattr(tta_cfg, "y_mirror", False)) if tta_cfg is not None else False
+    use_tta = tta_enabled and tta_y_mirror
+    
     # Run inference
     print("Running inference...")
+    if use_tta:
+        print("  TTA enabled: Y-mirror averaging")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
     
@@ -191,9 +277,12 @@ def run_inference(
                 for k, v in batch.items()
             }
             
-            # Forward pass
+            # Forward pass (with optional TTA)
             # Model outputs normalized deltas (dx_norm, dy_norm) in [-1, 1] range.
-            pred = model(batch_device)  # (batch, 2) in [-1, 1]
+            if use_tta:
+                pred = predict_with_tta(model, batch_device, config, device)
+            else:
+                pred = model(batch_device)  # (batch, 2) in [-1, 1]
 
             # We must reconstruct end = last_start + delta.
             features = batch_device.get("features")

@@ -10,7 +10,7 @@ if [ -d ".venv" ]; then
 fi
 
 # Run inference
+# Note: --config is intentionally omitted so that inference.py automatically
+# uses <checkpoint_dir>/config.yaml if available.
 python inference.py \
-    --config configs/config.yaml \
     "$@"
-

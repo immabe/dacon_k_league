@@ -194,6 +194,10 @@ mlflow:
 inference:
   batch_size: 128
   num_workers: 4
+  # Test Time Augmentation
+  tta:
+    enabled: true
+    y_mirror: true  # Average predictions with Y-mirrored input
   postprocess:
     # Inference-time stabilization rules
     enabled: true

@@ -1,6 +1,9 @@
 #!/bin/bash
 # Training script for K-League pass prediction
 
+# GPU 설정 (기본값: 0)
+GPU_ID=${1:-0}
+
 # Set working directory
 cd "$(dirname "$0")/.."
 
@@ -10,7 +13,6 @@ if [ -d ".venv" ]; then
 fi
 
 # Run training
-python train.py \
+CUDA_VISIBLE_DEVICES=$GPU_ID python train.py \
     --config configs/config.yaml \
-    "$@"
-
+    "${@:2}"

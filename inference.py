@@ -17,6 +17,33 @@ from src.models import KLeagueLightningModule
 from src.utils.postprocess import stabilize_end_coordinates
 
 
+def _infer_checkpoint_config_path(
+    config_path: Optional[str],
+    checkpoint_path: Optional[str],
+    default_config_path: str = "configs/config.yaml",
+) -> str:
+    """Resolve which config path to use for inference.
+
+    Priority:
+    - If user explicitly provided config_path (not None): use it.
+    - Else, if checkpoint_path is provided:
+      - If it's a directory: use <dir>/config.yaml if it exists.
+      - If it's a file: use <parent>/config.yaml if it exists.
+    - Else: fall back to default_config_path.
+    """
+    if config_path is not None:
+        return config_path
+
+    if checkpoint_path:
+        p = Path(checkpoint_path)
+        ckpt_dir = p if p.is_dir() else p.parent
+        candidate = ckpt_dir / "config.yaml"
+        if candidate.exists():
+            return str(candidate)
+
+    return default_config_path
+
+
 def load_best_model(
     config: OmegaConf,
     model_dir: str,
@@ -97,7 +124,7 @@ def _infer_checkpoint_label(checkpoint_path: Optional[str]) -> Optional[str]:
 
 
 def run_inference(
-    config_path: str,
+    config_path: Optional[str],
     checkpoint_path: Optional[str] = None,
     output_path: Optional[str] = None
 ) -> pd.DataFrame:
@@ -111,8 +138,16 @@ def run_inference(
     Returns:
         DataFrame with predictions.
     """
+    # Resolve config path (default: use checkpoint's config.yaml if present)
+    resolved_config_path = _infer_checkpoint_config_path(
+        config_path=config_path,
+        checkpoint_path=checkpoint_path,
+        default_config_path="configs/config.yaml",
+    )
+
     # Load configuration
-    config = OmegaConf.load(config_path)
+    print(f"Loading config from: {resolved_config_path}")
+    config = OmegaConf.load(resolved_config_path)
     
     # Set random seed
     pl.seed_everything(config.seed, workers=True)
@@ -260,8 +295,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/config.yaml",
-        help="Path to configuration file"
+        default=None,
+        help="Path to configuration file (optional; if omitted, uses <checkpoint_dir>/config.yaml when available)"
     )
     parser.add_argument(
         "--checkpoint",

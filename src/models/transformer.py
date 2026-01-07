@@ -48,6 +48,43 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
+class AttentionPooling(nn.Module):
+    """Attention-based pooling to aggregate sequence information."""
+    
+    def __init__(self, d_model: int):
+        super().__init__()
+        self.attn = nn.Linear(d_model, 1)
+        
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Apply attention pooling.
+        
+        Args:
+            x: Input sequence (batch, seq_len, d_model).
+            mask: Boolean mask (batch, seq_len), True for valid positions.
+            
+        Returns:
+            Pooled representation (batch, d_model).
+        """
+        # Calculate attention scores
+        scores = self.attn(x).squeeze(-1)  # (batch, seq_len)
+        
+        # Mask padding positions
+        if mask is not None:
+            # Use a large negative value for masking before softmax
+            scores = scores.masked_fill(~mask, -1e9)
+            
+        # Softmax to get weights
+        weights = torch.softmax(scores, dim=-1)  # (batch, seq_len)
+        
+        # Weighted sum of hidden states
+        # weights: (batch, seq_len) -> (batch, 1, seq_len)
+        # x: (batch, seq_len, d_model)
+        # pooled: (batch, 1, d_model) -> (batch, d_model)
+        pooled = torch.bmm(weights.unsqueeze(1), x).squeeze(1)
+        
+        return pooled
+
+
 class TransformerEncoder(nn.Module):
     """Transformer encoder for pass coordinate prediction."""
     
@@ -64,7 +101,8 @@ class TransformerEncoder(nn.Module):
         max_seq_len: int = 300,
         type_embed_dim: int = 32,
         result_embed_dim: int = 16,
-        use_positional_encoding: bool = True
+        use_positional_encoding: bool = True,
+        pooling_type: str = "attention"
     ):
         """Initialize Transformer encoder.
         
@@ -81,11 +119,13 @@ class TransformerEncoder(nn.Module):
             type_embed_dim: Dimension of type embedding.
             result_embed_dim: Dimension of result embedding.
             use_positional_encoding: Whether to use positional encoding.
+            pooling_type: Pooling strategy ('last' or 'attention').
         """
         super().__init__()
         
         self.d_model = d_model
         self.use_positional_encoding = use_positional_encoding
+        self.pooling_type = pooling_type
         
         # Embedding layers for categorical features
         self.type_embedding = nn.Embedding(num_type_classes, type_embed_dim)
@@ -119,6 +159,10 @@ class TransformerEncoder(nn.Module):
             num_layers=num_encoder_layers,
             enable_nested_tensor=False
         )
+        
+        # Pooling layer
+        if self.pooling_type == "attention":
+            self.pooling = AttentionPooling(d_model)
         
         # Output head for coordinate prediction
         self.output_head = nn.Sequential(
@@ -182,18 +226,22 @@ class TransformerEncoder(nn.Module):
         # Transformer encoding
         x = self.transformer_encoder(x, src_key_padding_mask=src_key_padding_mask)
         
-        # Get representation for the last valid position
-        if mask is not None:
-            # Find last valid position for each sequence
-            seq_lens = mask.sum(dim=1) - 1  # (batch,)
-            seq_lens = seq_lens.clamp(min=0)
-            batch_indices = torch.arange(batch_size, device=x.device)
-            last_hidden = x[batch_indices, seq_lens]  # (batch, d_model)
+        # Aggregate sequence information using pooling
+        if self.pooling_type == "attention":
+            hidden = self.pooling(x, mask)
         else:
-            last_hidden = x[:, -1]  # Take last position
+            # Default: Get representation for the last valid position
+            if mask is not None:
+                # Find last valid position for each sequence
+                seq_lens = mask.sum(dim=1) - 1  # (batch,)
+                seq_lens = seq_lens.clamp(min=0)
+                batch_indices = torch.arange(batch_size, device=x.device)
+                hidden = x[batch_indices, seq_lens]  # (batch, d_model)
+            else:
+                hidden = x[:, -1]  # Take last position
         
         # Predict coordinates
-        coords = self.output_head(last_hidden)  # (batch, 2)
+        coords = self.output_head(hidden)  # (batch, 2)
         
         return coords
     
@@ -230,6 +278,7 @@ class TransformerEncoder(nn.Module):
             max_seq_len=model_config.max_seq_len,
             type_embed_dim=model_config.type_embed_dim,
             result_embed_dim=model_config.result_embed_dim,
-            use_positional_encoding=model_config.use_positional_encoding
+            use_positional_encoding=model_config.use_positional_encoding,
+            pooling_type=getattr(model_config, "pooling_type", "attention")
         )
 

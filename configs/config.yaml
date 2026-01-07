@@ -122,6 +122,9 @@ model:
     
     # Positional encoding
     use_positional_encoding: true
+    
+    # Pooling
+    pooling_type: "attention"  # Options: last, attention
 
 # Training configuration
 training:

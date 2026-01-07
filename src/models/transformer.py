@@ -168,7 +168,7 @@ class TransformerEncoder(nn.Module):
         self.output_head = nn.Sequential(
             nn.Linear(d_model, d_model // 2),
             nn.LayerNorm(d_model // 2),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(d_model // 2, 2),  # Output (x, y)
             nn.Tanh()  # Ensure output in [-1, 1] (for dx/dy normalized deltas)

@@ -32,8 +32,14 @@ class FeatureExtractor:
         self.use_numerical = config.features.use_numerical
         self.use_derived = config.features.use_derived
         
-        # Get enabled derived features
+        # Get enabled features from config
         self.derived_features = list(config.features.derived) if self.use_derived else []
+        self.numerical_features = list(config.features.numerical) if self.use_numerical else []
+        
+        # For categorical, we exclude special tokens that are handled separately (type_name, result_name)
+        # and only include those that should be part of the dense feature vector (e.g., is_home)
+        all_categorical = list(config.features.categorical) if self.use_categorical else []
+        self.categorical_features_dense = [c for c in all_categorical if c not in ['type_name', 'result_name']]
     
     @property
     def num_type_classes(self) -> int:
@@ -53,19 +59,17 @@ class FeatureExtractor:
         """
         dim = 0
         
-        # Numerical features (normalized coordinates + time)
+        # Numerical features
         if self.use_numerical:
-            # start_x, start_y, end_x, end_y, time_seconds (normalized)
-            dim += 5
+            dim += len(self.numerical_features)
         
         # Derived features
         if self.use_derived:
-            # Each derived feature adds 1 dimension
             dim += len(self.derived_features)
         
-        # Categorical: is_home (binary)
+        # Categorical features in dense vector
         if self.use_categorical:
-            dim += 1
+            dim += len(self.categorical_features_dense)
         
         return dim
     
@@ -244,24 +248,18 @@ class FeatureExtractor:
         features_list = []
         
         if self.use_numerical:
-            # Normalized coordinates
-            start_x_norm, start_y_norm = self.normalize_coordinates(
-                df['start_x'].values, df['start_y'].values
-            )
-            end_x_norm, end_y_norm = self.normalize_coordinates(
-                df['end_x'].values, df['end_y'].values
-            )
-            
-            # Normalized time (assume max time ~60 min = 3600 sec per half)
-            time_norm = df['time_seconds'].values / 3600.0
-            
-            features_list.extend([
-                start_x_norm.reshape(-1, 1),
-                start_y_norm.reshape(-1, 1),
-                end_x_norm.reshape(-1, 1),
-                end_y_norm.reshape(-1, 1),
-                time_norm.reshape(-1, 1)
-            ])
+            for feat_name in self.numerical_features:
+                if feat_name in df.columns:
+                    val = df[feat_name].values
+                    
+                    if feat_name in ['start_x', 'end_x']:
+                        val = np.clip(val / self.field_length, 0, 1)
+                    elif feat_name in ['start_y', 'end_y']:
+                        val = np.clip(val / self.field_width, 0, 1)
+                    elif feat_name == 'time_seconds':
+                        val = val / 3600.0
+                    
+                    features_list.append(val.reshape(-1, 1))
         
         if self.use_derived:
             for feat_name in self.derived_features:
@@ -286,9 +284,11 @@ class FeatureExtractor:
                     features_list.append(feat_vals.reshape(-1, 1))
         
         if self.use_categorical:
-            # is_home as binary feature
-            is_home = df['is_home'].astype(float).values
-            features_list.append(is_home.reshape(-1, 1))
+            for feat_name in self.categorical_features_dense:
+                if feat_name in df.columns:
+                    if feat_name == 'is_home':
+                        val = df[feat_name].astype(float).values
+                        features_list.append(val.reshape(-1, 1))
         
         # Stack all features
         if features_list:

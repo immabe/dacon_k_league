@@ -1,0 +1,9 @@
+# Project Specific - Ignore contents but keep directories
+checkpoints/*
+!checkpoints/.gitkeep
+
+mlruns/*
+!mlruns/.gitkeep
+
+outputs/*
+!outputs/.gitkeep

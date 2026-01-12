@@ -1,6 +1,7 @@
 # K-League Pass Coordinate Prediction AI
 
 **Competition Rank:** 151 / 938 (Top 16%)
+https://dacon.io/competitions/official/236647/overview/description
 
 ## 1. Challenge Overview
 

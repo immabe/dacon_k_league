@@ -1,51 +1,116 @@
-## 프로젝트 구조
+# K-League Pass Coordinate Prediction AI
+
+**Competition Rank:** 151 / 938 (Top 16%)
+
+## 1. Challenge Overview
+
+### Background
+Modern football analysis often relies on simple event recording. However, true insight requires interpreting "tactical intent"—understanding the decision-making process within a complex game context. This challenge aims to train an AI to learn these contexts from K-League match data and predict the actual destination coordinates for the subsequent pass.
+
+### Goal
+**Develop an AI model that predicts the destination coordinates (X, Y) of the final pass in a given play sequence.**
+
+- **Input:** Sequence of play events in a K-League match.
+- **Model Output:** The displacement `(dx, dy)` from the last event's location.
+- **Final Target:** The absolute `(X, Y)` coordinates of the pass destination (calculated as `Last Event (X, Y) + Prediction (dx, dy)`).
+- **Coordinate System:** Relative coordinates mapped to a standard FIFA-recommended pitch size of **105 x 68**.
+- **Evaluation Metric:** **Euclidean Distance** between the predicted coordinates and the actual coordinates.
+
+---
+
+## 2. Solution Approach
+
+### Model Architecture: Transformer Sequence Encoder
+I implemented a **Transformer-based Sequence Encoder** to capture the temporal dependencies and spatial context of football play sequences.
+
+- **Embedding Layer:**
+  - **Categorical Features:** Event types (Pass, Carry, Shot, etc.) and results (Successful, Failed, etc.) are mapped to dense vectors.
+  - **Numerical Features:** Spatial coordinates (Start X/Y, End X/Y) and time information are normalized and projected.
+  - **Positional Encoding:** Added to preserve the sequential order of events.
+- **Encoder Blocks:** Stacked Transformer Encoder layers with Multi-Head Self-Attention to learn interactions between different events in the sequence.
+- **Pooling Strategy:** Attention-based pooling to aggregate the sequence information into a single context vector.
+- **Prediction Head:** A Multi-Layer Perceptron (MLP) that predicts the displacement `(dx, dy)` from the last event's position.
+
+### Key Features
+The model utilizes a rich set of features defined in `configs/config.yaml`:
+- **Raw Features:** Event Type, Outcome, Home/Away status, Coordinates (Start/End X, Y), Time.
+- **Derived Features:**
+  - **Movement:** Delta X/Y, Euclidean Distance, Angle, Speed.
+  - **Zonal Info:** Discretized start/end zones.
+  - **Tactical:** `is_forward_pass`, `is_progressive` (significant forward movement).
+
+### Training Strategy
+- **Loss Function:** Direct optimization of **Euclidean Distance** (aligning with the competition metric).
+- **Data Augmentation:** **Y-axis Mirroring** (Randomly flipping the Y-coordinates) to simulate symmetrical field situations and double the training data.
+- **Validation Split:** Group-based splitting by `game_id` to prevent data leakage from the same match appearing in both train and validation sets.
+- **Test Time Augmentation (TTA):** Averaging predictions from the original input and its Y-mirrored version during inference for robustness.
+- **Post-processing:** Clipping predictions to pitch boundaries (0-105, 0-68) and capping unrealistic pass distances based on training distribution.
+
+---
+
+## 3. Project Structure
+
 ```
 k-league/
 ├── configs/
-│   └── config.yaml          # OmegaConf 설정 파일 (모델, 학습, Feature 등)
+│   └── config.yaml          # Main configuration (Model, Training, Features)
 ├── src/
 │   ├── data/
-│   │   ├── dataset.py       # KLeagueDataset, KLeagueTestDataset
+│   │   ├── dataset.py       # Custom Dataset classes
 │   │   └── datamodule.py    # PyTorch Lightning DataModule
 │   ├── models/
-│   │   ├── transformer.py   # Transformer 인코더 모델
-│   │   └── lightning_module.py  # Lightning 학습 모듈
+│   │   ├── transformer.py   # Transformer Encoder implementation
+│   │   └── lightning_module.py  # Lightning Module for training loop
 │   └── utils/
-│       ├── features.py      # Feature 추출기 (config로 동적 선택)
-│       └── metrics.py       # 유클리드 거리 평가 지표
+│       ├── features.py      # Feature engineering & selection logic
+│       └── metrics.py       # Euclidean Distance metric implementation
 ├── scripts/
-│   ├── setup.sh            # 환경 설정 스크립트
-│   ├── run_train.sh        # 학습 실행 스크립트
-│   └── run_inference.sh    # 추론 실행 스크립트
-├── train.py                # 학습 진입점 (MLflow + Early Stopping)
-├── inference.py            # 추론 진입점 (자동 모델 로드)
-├── requirements.txt        # 패키지 의존성
-└── .gitignore
+│   ├── setup.sh             # Environment setup script
+│   ├── run_train.sh         # Training execution script
+│   └── run_inference.sh     # Inference execution script
+├── train.py                 # Training entry point (MLflow + Early Stopping)
+├── inference.py             # Inference entry point (Auto model loading)
+├── requirements.txt         # Python dependencies
+└── README.md                # Project documentation
 ```
-## 주요 기능
-Transformer 모델: 시퀀스 트랜스포머 인코더로 패스 도착 좌표 예측
-동적 Feature 선택: configs/config.yaml에서 사용할 feature 그룹 선택 가능
-좌표 정규화: 학습 시 [0,1] 정규화, 추론 시 원래 스케일(105x68)로 복원
-MLflow 실험 추적: 하이퍼파라미터, 메트릭, 모델 자동 로깅
-Early Stopping: validation loss 기준 조기 종료
-Best 모델 자동 로드: checkpoints/best_model_path.txt에서 자동 읽기
 
-## 사용 방법
-1. 환경 설정
+---
+
+## 4. Usage
+
+### Prerequisites
+- Python 3.8+
+- PyTorch
+- PyTorch Lightning
+- MLflow
+
+### 1. Environment Setup
+Run the setup script to create a virtual environment and install dependencies.
 ```bash
 bash scripts/setup.sh
 source .venv/bin/activate
 ```
-2. 학습
+
+### 2. Training
+Train the model using the configuration file. The script automatically handles MLflow logging and checkpointing.
 ```bash
 python train.py --config configs/config.yaml
 ```
-3. 추론 (best 모델 자동 로드)
+*Note: You can override parameters via CLI:*
+```bash
+python train.py --override training.batch_size=128 training.max_epochs=50
+```
+
+### 3. Inference
+Run inference on the test set. The script automatically detects and loads the best model from the `checkpoints/` directory.
 ```bash
 python inference.py --config configs/config.yaml
 ```
-2. 설정 오버라이드 예시
-배치 크기, 에폭 수 변경
-`python train.py --override training.batch_size=128 training.max_epochs=50`
-모델 파라미터 변경
-`python train.py --override model.baller2vec.d_model=256 model.baller2vec.n`
+This will generate a submission file in the `outputs/` directory.
+
+---
+
+## 5. Experiment Tracking
+All training runs, hyperparameters, and metrics are tracked using **MLflow**.
+- Artifacts (models, configs) are stored in `mlruns/`.
+- Best models are saved in `checkpoints/`.
